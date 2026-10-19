@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kalkulator Kurs Dolar</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --card: #ffffff;
+      --text: #1b1f27;
+      --muted: #667085;
+      --border: #d9dde5;
+      --accent: #1a6b4f;
+      --accent-soft: #e4f2ec;
+      --danger: #b42318;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12151a;
+        --card: #1b2028;
+        --text: #eef0f4;
+        --muted: #98a2b3;
+        --border: #2e3541;
+        --accent: #4cc39a;
+        --accent-soft: #1d2f29;
+        --danger: #f97066;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+    }
+    h1 { margin: 0 0 4px; font-size: 1.25rem; }
+    .sub { margin: 0 0 20px; color: var(--muted); font-size: .875rem; }
+    .rate {
+      background: var(--accent-soft);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 20px;
+    }
+    .rate strong { display: block; font-size: 1.125rem; color: var(--accent); }
+    .rate small { color: var(--muted); }
+    .rate.error strong { color: var(--danger); }
+    label { display: block; font-size: .8125rem; color: var(--muted); margin-bottom: 6px; }
+    .field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0 12px;
+      background: var(--card);
+    }
+    .field:focus-within { border-color: var(--accent); }
+    .field span { font-weight: 600; color: var(--muted); min-width: 34px; }
+    input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--text);
+      font-size: 1.25rem;
+      padding: 14px 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .result input { font-weight: 600; }
+    .swap {
+      display: block;
+      margin: 12px auto;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 1.125rem;
+      cursor: pointer;
+    }
+    .swap:hover { border-color: var(--accent); color: var(--accent); }
+    .refresh {
+      margin-top: 16px;
+      width: 100%;
+      padding: 12px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--accent);
+      color: #fff;
+      font-size: .9375rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    @media (prefers-color-scheme: dark) { .refresh { color: #0b1a14; } }
+    .refresh:disabled { opacity: .6; cursor: wait; }
+    .credit { margin: 14px 0 0; font-size: .75rem; color: var(--muted); text-align: center; }
+    .credit a { color: var(--muted); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Kalkulator Kurs Dolar</h1>
+    <p class="sub">Konversi USD ↔ Rupiah dengan kurs terbaru.</p>
+
+    <div class="rate" id="rate" aria-live="polite">
+      <strong id="rateValue">Memuat kurs…</strong>
+      <small id="rateMeta"></small>
+    </div>
+
+    <label for="from" id="fromLabel">Jumlah (USD)</label>
+    <div class="field">
+      <span id="fromCode">USD</span>
+      <input id="from" type="text" inputmode="decimal" autocomplete="off" value="1" aria-labelledby="fromLabel">
+    </div>
+
+    <button class="swap" id="swap" type="button" aria-label="Tukar arah konversi">⇅</button>
+
+    <label for="to" id="toLabel">Hasil (IDR)</label>
+    <div class="field result">
+      <span id="toCode">IDR</span>
+      <input id="to" type="text" readonly aria-labelledby="toLabel">
+    </div>
+
+    <button class="refresh" id="refresh" type="button">Perbarui kurs</button>
+    <p class="credit">Kurs hanya perkiraan, bukan kurs jual/beli bank. <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a></p>
+  </main>
+
+  <script>
+    // Sumber kurs: API publik tanpa kunci. Jika yang pertama gagal, coba yang kedua.
+    const SOURCES = [
+      {
+        name: "open.er-api.com",
+        url: "https://open.er-api.com/v6/latest/USD",
+        parse: (d) => d.result === "success"
+          ? { rate: d.rates.IDR, updated: d.time_last_update_utc }
+          : null,
+      },
+      {
+        name: "frankfurter.dev",
+        url: "https://api.frankfurter.dev/v1/latest?base=USD&symbols=IDR",
+        parse: (d) => d.rates && d.rates.IDR
+          ? { rate: d.rates.IDR, updated: d.date }
+          : null,
+      },
+    ];
+
+    const state = { rate: null, usdToIdr: true };
+
+    const $ = (id) => document.getElementById(id);
+    const els = {
+      from: $("from"), to: $("to"),
+      fromCode: $("fromCode"), toCode: $("toCode"),
+      fromLabel: $("fromLabel"), toLabel: $("toLabel"),
+      rate: $("rate"), rateValue: $("rateValue"), rateMeta: $("rateMeta"),
+      swap: $("swap"), refresh: $("refresh"),
+    };
+
+    const idrFmt = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 });
+    const usdFmt = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    // Terima input seperti "1.500.000", "1500000", atau "12,5".
+    // Rupiah tidak punya desimal, jadi titik di mode IDR selalu pemisah ribuan.
+    function parseAmount(text, isIdr) {
+      let s = text.trim().replace(/\s/g, "");
+      if (!s) return NaN;
+      if (isIdr) return Number(s.replace(/\./g, "").replace(",", "."));
+      const dots = (s.match(/\./g) || []).length;
+      const commas = (s.match(/,/g) || []).length;
+      if (dots && commas) {
+        // Pemisah desimal adalah yang muncul terakhir.
+        const decimalIsComma = s.lastIndexOf(",") > s.lastIndexOf(".");
+        s = decimalIsComma ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+      } else if (commas) {
+        s = commas === 1 ? s.replace(",", ".") : s.replace(/,/g, "");
+      } else if (dots > 1) {
+        s = s.replace(/\./g, "");
+      }
+      return Number(s);
+    }
+
+    function convert() {
+      const amount = parseAmount(els.from.value, !state.usdToIdr);
+      if (state.rate == null || !isFinite(amount)) {
+        els.to.value = "";
+        return;
+      }
+      els.to.value = state.usdToIdr
+        ? idrFmt.format(amount * state.rate)
+        : usdFmt.format(amount / state.rate);
+    }
+
+    function renderDirection() {
+      const [a, b] = state.usdToIdr ? ["USD", "IDR"] : ["IDR", "USD"];
+      els.fromCode.textContent = a;
+      els.toCode.textContent = b;
+      els.fromLabel.textContent = `Jumlah (${a})`;
+      els.toLabel.textContent = `Hasil (${b})`;
+    }
+
+    function showRate(rate, meta) {
+      els.rate.classList.remove("error");
+      els.rateValue.textContent = `1 USD = Rp ${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(rate)}`;
+      els.rateMeta.textContent = meta;
+    }
+
+    function showError(message) {
+      els.rate.classList.add("error");
+      els.rateValue.textContent = "Kurs tidak tersedia";
+      els.rateMeta.textContent = message;
+    }
+
+    // Kurs hanya berubah sekali sehari di API ini dan ada batas permintaan,
+    // jadi hasil disimpan sementara di browser (cache) dan dipakai ulang.
+    const CACHE_KEY = "kurs-usd-idr";
+    const CACHE_TTL = 60 * 60 * 1000;      // 1 jam: pakai cache otomatis
+    const MIN_REFRESH = 5 * 60 * 1000;     // tombol "Perbarui" paling cepat tiap 5 menit
+
+    function readCache() {
+      try {
+        const c = JSON.parse(localStorage.getItem(CACHE_KEY));
+        return c && c.rate > 0 && c.fetchedAt ? c : null;
+      } catch { return null; }
+    }
+    function writeCache(entry) {
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(entry)); } catch { /* abaikan */ }
+    }
+
+    async function loadRate(manual = false) {
+      const cached = readCache();
+      const age = cached ? Date.now() - cached.fetchedAt : Infinity;
+      if (cached && age < (manual ? MIN_REFRESH : CACHE_TTL)) {
+        state.rate = cached.rate;
+        showRate(cached.rate, `Sumber: ${cached.source} · diperbarui ${cached.updated}`);
+        convert();
+        return;
+      }
+
+      els.refresh.disabled = true;
+      els.rateValue.textContent = "Memuat kurs…";
+      els.rateMeta.textContent = "";
+
+      for (const source of SOURCES) {
+        try {
+          const res = await fetch(source.url, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const parsed = source.parse(await res.json());
+          if (!parsed || !(parsed.rate > 0)) throw new Error("Data tidak valid");
+          state.rate = parsed.rate;
+          writeCache({ rate: parsed.rate, updated: parsed.updated, source: source.name, fetchedAt: Date.now() });
+          showRate(parsed.rate, `Sumber: ${source.name} · diperbarui ${parsed.updated}`);
+          convert();
+          els.refresh.disabled = false;
+          return;
+        } catch (err) {
+          console.warn(`Gagal memuat dari ${source.name}:`, err);
+        }
+      }
+
+      // Semua sumber gagal: pakai cache lama jika ada, lengkap dengan peringatan.
+      if (cached) {
+        state.rate = cached.rate;
+        showRate(cached.rate, `Sumber: ${cached.source} · diperbarui ${cached.updated} (data lama, gagal memuat kurs baru)`);
+      } else {
+        state.rate = null;
+        showError("Periksa koneksi internet lalu coba lagi.");
+      }
+      convert();
+      els.refresh.disabled = false;
+    }
+
+    els.from.addEventListener("input", convert);
+    els.refresh.addEventListener("click", () => loadRate(true));
+    els.swap.addEventListener("click", () => {
+      // Jadikan hasil sebelumnya sebagai input baru supaya angkanya "berbalik".
+      const previous = els.to.value;
+      state.usdToIdr = !state.usdToIdr;
+      renderDirection();
+      if (previous) els.from.value = previous;
+      convert();
+    });
+
+    renderDirection();
+    loadRate();
+  </script>
+</body>
+</html>
